@@ -1,0 +1,142 @@
+{
+  "name": "aoe2-watcher",
+  "version": "1.1.1",
+  "description": "AoE2HDBets Replay Watcher",
+  "author": "AoE2HDBets",
+  "license": "ISC",
+  "main": "main.js",
+  "productName": "AoE2HDBets Watcher",
+  "scripts": {
+    "start": "electron main.js",
+    "build": "electron-builder",
+    "pack": "electron-builder --dir",
+    "dist:mac": "electron-builder --mac dmg",
+    "dist:win": "electron-builder --win nsis portable --x64",
+    "dist:linux": "electron-builder --linux AppImage --x64",
+    "dist:manual-zip": "node scripts/build-manual-zip.mjs",
+    "dist:release": "npm run dist:mac && npm run dist:manual-zip && npm run dist:linux"
+  },
+  "build": {
+    "appId": "com.aoe2hdbets.watcher",
+    "productName": "AoE2HDBets Watcher",
+    "protocols": [
+      {
+        "name": "AoE2HDBets Watcher Pairing",
+        "schemes": [
+          "aoe2hd-watcher"
+        ]
+      }
+    ],
+    "directories": {
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "watcher.js",
+      "preload.js",
+      "index.html",
+      "renderer.js",
+      "build/**/*",
+      "package.json",
+      ".env.example",
+      "node_modules/**/*"
+    ],
+    "mac": {
+      "category": "public.app-category.utilities",
+      "target": [
+        "dmg"
+      ],
+      "icon": "build/icon.icns",
+      "minimumSystemVersion": "10.13",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.inherit.plist",
+      "extendInfo": {
+        "CFBundleDisplayName": "AoE2HDBets Watcher",
+        "CFBundleName": "AoE2HDBets Watcher",
+        "NSHumanReadableCopyright": "© AoE2HDBets"
+      }
+    },
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "category": "Utility",
+      "icon": "build/icon.png",
+      "desktop": {
+        "Name": "AoE2HDBets Watcher",
+        "Comment": "AoE2HDBets replay watcher",
+        "StartupWMClass": "AoE2HDBets Watcher"
+      }
+    },
+    "dmg": {
+      "title": "AoE2HDBets Watcher",
+      "iconSize": 128,
+      "window": {
+        "width": 540,
+        "height": 380
+      },
+      "contents": [
+        {
+          "x": 150,
+          "y": 190,
+          "type": "file"
+        },
+        {
+          "x": 390,
+          "y": 190,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "AoE2HDBets Watcher",
+      "uninstallDisplayName": "AoE2HDBets Watcher",
+      "installerLanguages": [
+        "en_US"
+      ]
+    },
+    "afterSign": "scripts/notarize.js"
+  },
+  "keywords": [],
+  "dependencies": {
+    "axios": "^1.8.4",
+    "chokidar": "^4.0.3",
+    "dotenv": "^16.5.0",
+    "form-data": "^4.0.2"
+  },
+  "devDependencies": {
+    "@electron/notarize": "^3.1.0",
+    "electron": "^35.1.4",
+    "electron-builder": "^24.13.3"
+  }
+}
