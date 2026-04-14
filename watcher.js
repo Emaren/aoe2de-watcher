@@ -152,7 +152,7 @@ function buildRuntimeConfig(config = {}) {
     replayProgressLogIntervalMs: Number(
       process.env.AOE2_REPLAY_PROGRESS_LOG_INTERVAL_MS || 180000
     ),
-    minReplayBytes: Number(process.env.AOE2_MIN_REPLAY_BYTES || 131072),
+    minReplayBytes: Number(process.env.AOE2_MIN_REPLAY_BYTES || 1),
     watcherUid:
       process.env.WATCHER_USER_UID ||
       `watcher-${crypto
@@ -300,34 +300,36 @@ function sleep(ms) {
 }
 
 async function waitForFirstBytes(filePath, runtimeConfig) {
-  const startedAt = Date.now();
+  const deadline = Date.now() + runtimeConfig.firstBytesTimeoutMs;
+  let lastSeenSize = -1;
 
-  while (Date.now() - startedAt <= runtimeConfig.firstBytesTimeoutMs) {
-    if (!fs.existsSync(filePath)) {
-      log(`Replay disappeared before first parse: ${path.basename(filePath)}`, "warn");
-      return false;
-    }
-
+  while (Date.now() < deadline) {
     try {
       const stats = await fs.promises.stat(filePath);
-      if (stats.size >= runtimeConfig.minReplayBytes) {
+      const size = Number(stats?.size || 0);
+
+      if (size > 0) {
+        if (size !== lastSeenSize) {
+          log(`Replay started writing (${size} bytes): ${path.basename(filePath)}`);
+        }
         return true;
       }
+
+      lastSeenSize = size;
     } catch (err) {
       log(
         `Unable to inspect ${path.basename(filePath)} before live parse: ${err.message}`,
         "warn"
       );
-      return false;
     }
 
     await sleep(runtimeConfig.firstBytesPollMs);
   }
 
   log(
-    `Replay never reached minimum parseable size (${runtimeConfig.minReplayBytes} bytes): ${path.basename(
-      filePath
-    )}`,
+    `Replay did not write any bytes within ${Math.round(
+      runtimeConfig.firstBytesTimeoutMs / 1000
+    )}s: ${path.basename(filePath)}`,
     "warn"
   );
   return false;
@@ -787,13 +789,14 @@ async function monitorReplayFile(filePath, runtimeConfig) {
   log(`Starting monitor loop for ${path.basename(filePath)}.`);
 
   try {
-    if (!(await waitForFirstBytes(filePath, runtimeConfig))) {
-      log(
-        `Stopping monitor for ${path.basename(filePath)} before upload because byte floor was not reached.`,
-        "warn"
-      );
-      return;
-    }
+  if (!(await waitForFirstBytes(filePath, runtimeConfig))) {
+    log(
+      `Replay has not started writing yet for ${path.basename(
+        filePath
+      )}; keeping monitor alive and retrying on the normal loop.`,
+      "warn"
+    );
+  }
 
     if (runtimeConfig.initialLiveDelayMs > 0) {
       log(
