@@ -393,7 +393,7 @@ function startCurrentWatcher(
   return isWatching;
 }
 
-async function runHistoricalImport({ source, filePaths = [] }) {
+async function runHistoricalImport({ source, filePaths = null }) {
   if (currentImportState.isRunning) {
     return {
       ok: false,
@@ -413,6 +413,8 @@ async function runHistoricalImport({ source, filePaths = [] }) {
 
   importSession += 1;
   const thisRun = importSession;
+  const normalizedFilePaths =
+    Array.isArray(filePaths) && filePaths.length > 0 ? filePaths : null;
 
   appendSessionHeader(source === "retry" ? `Import retry ${thisRun}` : `Historical import ${thisRun}`);
   appendLog(
@@ -450,7 +452,7 @@ async function runHistoricalImport({ source, filePaths = [] }) {
       config,
       {
         source,
-        filePaths,
+        filePaths: normalizedFilePaths,
       },
       {
         onLog: (message, level = "info") => appendLog(message, level),
