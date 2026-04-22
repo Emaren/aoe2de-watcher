@@ -12,7 +12,7 @@ This is the mac-first DE watcher for AoE2DEWarWagers. The old HD watcher archive
 - Primary upload endpoint: `https://api-prodn.aoe2dewarwagers.com/api/replay/upload`
 - Fallback upload endpoint: `https://aoe2dewarwagers.com/api/replay/upload`
 - mac app bundle: `AoE2DEWarWagers Watcher.app`
-- mac DMG: `dist/AoE2DEWarWagers Watcher-1.1.1-arm64.dmg`
+- mac DMG: `dist/AoE2DEWarWagers Watcher-1.1.2-arm64.dmg`
 - mac direct ZIP: `dist/AoE2DEWarWagers-watcher-direct.zip`
 
 ## Owning files
@@ -68,8 +68,8 @@ npm run dist:manual-zip
 Expected artifacts:
 
 ```text
-dist/AoE2DEWarWagers Watcher-1.1.1-arm64.dmg
-dist/AoE2DEWarWagers Watcher-1.1.1-arm64.dmg.blockmap
+dist/AoE2DEWarWagers Watcher-1.1.2-arm64.dmg
+dist/AoE2DEWarWagers Watcher-1.1.2-arm64.dmg.blockmap
 dist/AoE2DEWarWagers-watcher-direct.zip
 dist/mac-arm64/AoE2DEWarWagers Watcher.app
 dist/latest-mac.yml
