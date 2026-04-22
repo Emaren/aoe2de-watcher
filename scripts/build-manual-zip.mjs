@@ -10,16 +10,12 @@ const watcherDir = path.resolve(scriptDir, "..");
 const distDir = path.join(watcherDir, "dist");
 const packageJsonPath = path.join(watcherDir, "package.json");
 const packageJson = JSON.parse(await fs.readFile(packageJsonPath, "utf8"));
-const productName = packageJson.productName || "AoE2HDBets Watcher";
-const productSlug = productName
-  .toLowerCase()
-  .replace(/[^a-z0-9]+/g, "-")
-  .replace(/^-|-$/g, "");
+const productName = packageJson.productName || "AoE2DEWarWagers Watcher";
 
 const appBundleName = `${productName}.app`;
 const appBundlePath = path.join(distDir, "mac-arm64", appBundleName);
 const payloadDir = path.join(distDir, `${productName} Direct`);
-const outputZipPath = path.join(distDir, `${productSlug}-direct.zip`);
+const outputZipPath = path.join(distDir, "AoE2DEWarWagers-watcher-direct.zip");
 const readmePath = path.join(payloadDir, "README.txt");
 
 const readmeBody = `${productName} ${packageJson.version} direct ZIP
@@ -30,7 +26,7 @@ Same watcher. Same uploads. Same replay flow.
 Recommended:
 1. Move ${appBundleName} into /Applications.
 2. Open the app.
-3. Paste your watcher key from https://aoe2hdbets.com/profile once.
+3. Paste your watcher key from https://aoe2dewarwagers.com/profile once.
 4. Leave the watcher open while you play.
 
 If macOS blocks the unsigned app, run:

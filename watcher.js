@@ -6,9 +6,14 @@ const crypto = require("crypto");
 const axios = require("axios");
 const FormData = require("form-data");
 
-const SUPPORTED_REPLAY_EXTENSIONS = [".aoe2record", ".aoe2mpgame", ".mgz", ".mgx", ".mgl"];
+const SUPPORTED_REPLAY_EXTENSIONS = [".aoe2record", ".aoe2mpgame"];
 const IMPORT_STABILITY_CHECK_MS = 1200;
 const IMPORT_ITEM_LIMIT = 75;
+const DEFAULT_API_BASE_URL = "https://api-prodn.aoe2dewarwagers.com";
+const DEFAULT_API_FALLBACK_BASE_URL = "https://aoe2dewarwagers.com";
+const DE_PROFILE_ROOT_SEGMENTS = ["Games", "Age of Empires 2 DE"];
+const DE_LOCAL_PROFILE_ROOT_SEGMENTS = ["AppData", "Local", "Games", "Age of Empires 2 DE"];
+const DE_SAVEGAME_DIR_NAMES = ["savegame", "SaveGame"];
 
 let activeWatcher = null;
 let activeUploadState = new Map();
@@ -47,54 +52,124 @@ function emitRuntimeEvent(type, payload = {}) {
   }
 }
 
-function firstExistingPath(paths) {
-  for (const candidate of paths) {
-    if (fs.existsSync(candidate)) {
-      return candidate;
-    }
+function isDirectory(candidate) {
+  try {
+    return fs.statSync(candidate).isDirectory();
+  } catch {
+    return false;
   }
-  return paths[0] || null;
 }
 
-function getDefaultReplayDir() {
-  const home = os.homedir();
-  const platform = os.platform();
+function listDirectoryPaths(parent) {
+  try {
+    return fs
+      .readdirSync(parent, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => path.join(parent, entry.name));
+  } catch {
+    return [];
+  }
+}
+
+function dedupePaths(paths) {
+  return [...new Set(paths.filter(Boolean))];
+}
+
+function prioritizePaths(paths, preferredPaths) {
+  const normalizedPreferred = preferredPaths.filter(Boolean);
+  const remaining = paths.filter((candidate) => !normalizedPreferred.includes(candidate));
+  return dedupePaths([...normalizedPreferred, ...remaining]);
+}
+
+function getSaveGameDirsFromProfileRoot(profileRoot) {
+  return listDirectoryPaths(profileRoot).flatMap((profileDir) =>
+    DE_SAVEGAME_DIR_NAMES.map((dirName) => path.join(profileDir, dirName)).filter(isDirectory)
+  );
+}
+
+function getWindowsProfileRootsForDrive(driveRoot) {
+  const usersDir = path.join(driveRoot, "users");
+  const existingUsers = listDirectoryPaths(usersDir);
+  const preferredUsers = [
+    path.join(usersDir, "crossover"),
+    path.join(usersDir, "steamuser"),
+    path.join(usersDir, os.userInfo().username),
+  ];
+
+  return prioritizePaths(existingUsers, preferredUsers)
+    .filter(isDirectory)
+    .flatMap((userDir) => [
+      path.join(userDir, ...DE_PROFILE_ROOT_SEGMENTS),
+      path.join(userDir, ...DE_LOCAL_PROFILE_ROOT_SEGMENTS),
+    ]);
+}
+
+function getCrossOverDriveRoots(home) {
+  const bottlesRoot = path.join(home, "Library", "Application Support", "CrossOver", "Bottles");
+  const existingBottleDrives = listDirectoryPaths(bottlesRoot)
+    .map((bottleDir) => path.join(bottleDir, "drive_c"))
+    .filter(isDirectory);
+
+  return prioritizePaths(existingBottleDrives, [path.join(bottlesRoot, "Steam", "drive_c")]);
+}
+
+function getProtonDriveRoots(home) {
+  return [
+    path.join(home, ".steam", "steam", "steamapps", "compatdata", "813780", "pfx", "drive_c"),
+    path.join(home, ".local", "share", "Steam", "steamapps", "compatdata", "813780", "pfx", "drive_c"),
+    path.join(
+      home,
+      ".var",
+      "app",
+      "com.valvesoftware.Steam",
+      ".local",
+      "share",
+      "Steam",
+      "steamapps",
+      "compatdata",
+      "813780",
+      "pfx",
+      "drive_c"
+    ),
+  ].filter(isDirectory);
+}
+
+function pickBestExistingDir(paths) {
+  const existing = dedupePaths(paths).filter(isDirectory);
+  if (existing.length === 0) {
+    return null;
+  }
+
+  return existing
+    .map((candidate) => ({
+      candidate,
+      mtimeMs: fs.statSync(candidate).mtimeMs,
+    }))
+    .sort((a, b) => b.mtimeMs - a.mtimeMs || a.candidate.localeCompare(b.candidate))[0].candidate;
+}
+
+function getDefaultReplayDir({ home = os.homedir(), platform = os.platform() } = {}) {
+  const nativeProfileRoots = [
+    path.join(home, ...DE_PROFILE_ROOT_SEGMENTS),
+    path.join(home, ...DE_LOCAL_PROFILE_ROOT_SEGMENTS),
+  ];
+  let profileRoots = [];
 
   if (platform === "darwin") {
-    return firstExistingPath([
-      path.join(
-        home,
-        "Library/Application Support/CrossOver/Bottles/Steam/drive_c/Program Files (x86)/Steam/steamapps/common/Age2HD/SaveGame"
-      ),
-      path.join(
-        home,
-        "Library/Application Support/CrossOver/Bottles/Steam/drive_c/users/crossover/My Documents/My Games/Age of Empires 2 HD/SaveGame"
-      ),
-      path.join(home, "Documents", "My Games", "Age of Empires 2 HD", "SaveGame"),
-      path.join(home, "Documents", "My Games", "Age of Empires 2 DE", "SaveGame"),
-    ]);
+    profileRoots = [
+      ...getCrossOverDriveRoots(home).flatMap(getWindowsProfileRootsForDrive),
+      ...nativeProfileRoots,
+    ];
+  } else if (platform === "win32") {
+    profileRoots = nativeProfileRoots;
+  } else {
+    profileRoots = [
+      ...getProtonDriveRoots(home).flatMap(getWindowsProfileRootsForDrive),
+      ...nativeProfileRoots,
+    ];
   }
 
-  if (platform === "win32") {
-    return firstExistingPath([
-      path.join(home, "Documents", "My Games", "Age of Empires 2 HD", "SaveGame"),
-      path.join(home, "Documents", "My Games", "Age of Empires 2 DE", "SaveGame"),
-    ]);
-  }
-
-  return firstExistingPath([
-    path.join(
-      home,
-      ".wine/drive_c/Program Files (x86)/Microsoft Games/Age of Empires II HD/SaveGame"
-    ),
-    path.join(
-      home,
-      ".wine/drive_c/users",
-      os.userInfo().username,
-      "My Documents/My Games/Age of Empires 2 HD/SaveGame"
-    ),
-    path.join(home, "Documents", "My Games", "Age of Empires 2 HD", "SaveGame"),
-  ]);
+  return pickBestExistingDir(dedupePaths(profileRoots).flatMap(getSaveGameDirsFromProfileRoot));
 }
 
 function normalizeBaseUrl(value) {
@@ -102,14 +177,12 @@ function normalizeBaseUrl(value) {
 }
 
 function buildRuntimeConfig(config = {}) {
-  const defaultApiBaseUrl = "https://api-prodn.aoe2hdbets.com";
-
   const apiBaseUrl = normalizeBaseUrl(
-    config.apiBaseUrl || process.env.AOE2_API_BASE_URL || defaultApiBaseUrl
+    config.apiBaseUrl || process.env.AOE2_API_BASE_URL || DEFAULT_API_BASE_URL
   );
 
   const defaultFallbackApiBaseUrl =
-    apiBaseUrl === defaultApiBaseUrl ? "https://aoe2hdbets.com" : "";
+    apiBaseUrl === DEFAULT_API_BASE_URL ? DEFAULT_API_FALLBACK_BASE_URL : "";
 
   const apiFallbackBaseUrl = normalizeBaseUrl(
     config.apiFallbackBaseUrl ||
@@ -1228,7 +1301,7 @@ async function importHistoricalReplays(config = {}, options = {}, hooks = {}) {
         pushImportItem(state.recentItems, createImportItem(candidate.filePath, "failed", detail));
       } else if (result.resultType === "duplicate") {
         state.skipped += 1;
-        const detail = result.detail || "Replay already exists on AoE2HDBets.";
+        const detail = result.detail || "Replay already exists on AoE2DEWarWagers.";
         pushImportItem(state.skippedItems, createImportItem(candidate.filePath, "skipped", detail));
         pushImportItem(state.recentItems, createImportItem(candidate.filePath, "skipped", detail));
       } else {
@@ -1284,7 +1357,7 @@ function startWatching(config = {}, hooks = {}) {
   if (validationError) {
     log(validationError, "error");
     if (validationError.toLowerCase().includes("replay directory")) {
-      log("Choose a valid SaveGame folder and restart watching.", "error");
+      log("Choose a valid AoE2DE savegame folder and restart watching.", "error");
     }
     emitRuntimeEvent("watcher-error", {
       detail: validationError,

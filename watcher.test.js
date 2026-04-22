@@ -5,8 +5,11 @@ const path = require("node:path");
 const test = require("node:test");
 
 const {
+  buildRuntimeConfig,
   getFileFingerprint,
+  getDefaultReplayDir,
   getReplayContentHash,
+  getSupportedReplayExtensions,
   resolveFinalReplayShortCircuit,
 } = require("./watcher");
 
@@ -38,6 +41,119 @@ async function createTempReplay(t, content) {
   await fs.writeFile(filePath, content);
   return filePath;
 }
+
+async function mkdirp(targetPath) {
+  await fs.mkdir(targetPath, { recursive: true });
+  return targetPath;
+}
+
+test("defaults to the CrossOver AoE2DE savegame folder on macOS", async (t) => {
+  const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), "aoe2de-home-"));
+  t.after(async () => {
+    await fs.rm(tempHome, { recursive: true, force: true });
+  });
+
+  const deSaveGameDir = await mkdirp(
+    path.join(
+      tempHome,
+      "Library",
+      "Application Support",
+      "CrossOver",
+      "Bottles",
+      "Steam",
+      "drive_c",
+      "users",
+      "crossover",
+      "Games",
+      "Age of Empires 2 DE",
+      "76561198000000000",
+      "savegame"
+    )
+  );
+
+  const legacyInstallDir = ["Age2", "HD"].join("");
+  await mkdirp(
+    path.join(
+      tempHome,
+      "Library",
+      "Application Support",
+      "CrossOver",
+      "Bottles",
+      "Steam",
+      "drive_c",
+      "Program Files (x86)",
+      "Steam",
+      "steamapps",
+      "common",
+      legacyInstallDir,
+      "SaveGame"
+    )
+  );
+
+  assert.equal(getDefaultReplayDir({ home: tempHome, platform: "darwin" }), deSaveGameDir);
+});
+
+test("does not fall back to HD replay folders", async (t) => {
+  const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), "aoe2de-home-"));
+  t.after(async () => {
+    await fs.rm(tempHome, { recursive: true, force: true });
+  });
+
+  await mkdirp(
+    path.join(
+      tempHome,
+      "Library",
+      "Application Support",
+      "CrossOver",
+      "Bottles",
+      "Steam",
+      "drive_c",
+      "Program Files (x86)",
+      "Steam",
+      "steamapps",
+      "common",
+      ["Age2", "HD"].join(""),
+      "SaveGame"
+    )
+  );
+
+  assert.equal(getDefaultReplayDir({ home: tempHome, platform: "darwin" }), null);
+});
+
+test("runtime defaults point to the DE API stack", () => {
+  const originalApiBaseUrl = process.env.AOE2_API_BASE_URL;
+  const originalFallbackBaseUrl = process.env.AOE2_API_FALLBACK_BASE_URL;
+  delete process.env.AOE2_API_BASE_URL;
+  delete process.env.AOE2_API_FALLBACK_BASE_URL;
+
+  try {
+    const config = buildRuntimeConfig();
+
+    assert.deepEqual(
+      config.uploadTargets.map((target) => target.uploadUrl),
+      [
+        "https://api-prodn.aoe2dewarwagers.com/api/replay/upload",
+        "https://aoe2dewarwagers.com/api/replay/upload",
+      ]
+    );
+  } finally {
+    if (originalApiBaseUrl === undefined) {
+      delete process.env.AOE2_API_BASE_URL;
+    } else {
+      process.env.AOE2_API_BASE_URL = originalApiBaseUrl;
+    }
+
+    if (originalFallbackBaseUrl === undefined) {
+      delete process.env.AOE2_API_FALLBACK_BASE_URL;
+    } else {
+      process.env.AOE2_API_FALLBACK_BASE_URL = originalFallbackBaseUrl;
+    }
+  }
+});
+
+test("watcher imports DE replay extensions only", () => {
+  assert.deepEqual(getSupportedReplayExtensions(), [".aoe2record", ".aoe2mpgame"]);
+});
 
 test("short-circuits when the replay fingerprint is already settled", async (t) => {
   const filePath = await createTempReplay(t, Buffer.from("settled replay"));

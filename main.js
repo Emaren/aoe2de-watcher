@@ -19,8 +19,11 @@ const {
   stopWatching,
 } = require("./watcher");
 
-const WATCHER_PAIR_PROTOCOL = "aoe2hd-watcher";
-const APP_NAME = "AoE2HDBets Watcher";
+const WATCHER_PAIR_PROTOCOL = "aoe2de-watcher";
+const APP_NAME = "AoE2DEWarWagers Watcher";
+const APP_ID = "com.aoe2dewarwagers.watcher";
+const DEFAULT_API_BASE_URL = "https://api-prodn.aoe2dewarwagers.com";
+const DEFAULT_API_FALLBACK_BASE_URL = "https://aoe2dewarwagers.com";
 
 let mainWindow = null;
 let watcherHandle = null;
@@ -37,8 +40,8 @@ function getConfigPath() {
 function getDefaultConfig() {
   return {
     watchDir: process.env.AOE2_WATCH_DIR || getDefaultReplayDir() || "",
-    apiBaseUrl: process.env.AOE2_API_BASE_URL || "https://api-prodn.aoe2hdbets.com",
-    apiFallbackBaseUrl: process.env.AOE2_API_FALLBACK_BASE_URL || "https://aoe2hdbets.com",
+    apiBaseUrl: process.env.AOE2_API_BASE_URL || DEFAULT_API_BASE_URL,
+    apiFallbackBaseUrl: process.env.AOE2_API_FALLBACK_BASE_URL || DEFAULT_API_FALLBACK_BASE_URL,
     uploadApiKey: process.env.AOE2_UPLOAD_API_KEY || "",
     autoStartWatching: true,
     lastImportSummary: null,
@@ -204,7 +207,7 @@ function getAppInfo(config = loadConfig()) {
 function getWindowIconPath() {
   const buildDir = path.join(__dirname, "build");
   const windowsIconPath = path.join(buildDir, "icon.ico");
-  const pngIconPath = path.join(buildDir, "aoe2hd-watcher-logo.png");
+  const pngIconPath = path.join(buildDir, "aoe2dewarwagers-watcher-logo.png");
 
   if (process.platform === "win32" && fs.existsSync(windowsIconPath)) {
     return windowsIconPath;
@@ -515,7 +518,7 @@ function processPendingPairingUrl() {
   });
 
   broadcastConfig(savedConfig);
-  appendLog("Paired this watcher with your AoE2HDBets profile key.");
+  appendLog("Paired this watcher with your AoE2DEWarWagers profile key.");
 
   const setupBlocker = getSetupBlocker(savedConfig);
   if (setupBlocker) {
@@ -582,7 +585,7 @@ function createWindow() {
 function bootWatcherApp() {
   app.setName(APP_NAME);
   if (process.platform === "win32") {
-    app.setAppUserModelId("com.aoe2hdbets.watcher");
+    app.setAppUserModelId(APP_ID);
   }
 
   registerPairingProtocol();
@@ -641,7 +644,7 @@ function bootWatcherApp() {
       config.watchDir || getDefaultReplayDir() || path.join(app.getPath("documents"), "My Games");
 
     const result = await dialog.showOpenDialog(mainWindow, {
-      title: "Choose your AoE2 SaveGame folder",
+      title: "Choose your AoE2DE savegame folder",
       defaultPath,
       properties: ["openDirectory", "dontAddToRecent"],
     });

@@ -1,29 +1,30 @@
 {
-  "name": "aoe2-watcher",
+  "name": "aoe2dewarwagers-watcher",
   "version": "1.1.1",
-  "description": "AoE2HDBets Replay Watcher",
-  "author": "AoE2HDBets",
+  "description": "AoE2DEWarWagers replay watcher",
+  "author": "AoE2DEWarWagers",
   "license": "ISC",
   "main": "main.js",
-  "productName": "AoE2HDBets Watcher",
+  "productName": "AoE2DEWarWagers Watcher",
   "scripts": {
     "start": "electron main.js",
+    "test": "node --test watcher.test.js",
     "build": "electron-builder",
     "pack": "electron-builder --dir",
-    "dist:mac": "electron-builder --mac dmg",
+    "dist:mac": "electron-builder --mac dmg --arm64",
     "dist:win": "electron-builder --win nsis portable --x64",
     "dist:linux": "electron-builder --linux AppImage --x64",
     "dist:manual-zip": "node scripts/build-manual-zip.mjs",
     "dist:release": "npm run dist:mac && npm run dist:manual-zip && npm run dist:linux"
   },
   "build": {
-    "appId": "com.aoe2hdbets.watcher",
-    "productName": "AoE2HDBets Watcher",
+    "appId": "com.aoe2dewarwagers.watcher",
+    "productName": "AoE2DEWarWagers Watcher",
     "protocols": [
       {
-        "name": "AoE2HDBets Watcher Pairing",
+        "name": "AoE2DEWarWagers Watcher Pairing",
         "schemes": [
-          "aoe2hd-watcher"
+          "aoe2de-watcher"
         ]
       }
     ],
@@ -53,9 +54,9 @@
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.inherit.plist",
       "extendInfo": {
-        "CFBundleDisplayName": "AoE2HDBets Watcher",
-        "CFBundleName": "AoE2HDBets Watcher",
-        "NSHumanReadableCopyright": "© AoE2HDBets"
+        "CFBundleDisplayName": "AoE2DEWarWagers Watcher",
+        "CFBundleName": "AoE2DEWarWagers Watcher",
+        "NSHumanReadableCopyright": "© AoE2DEWarWagers"
       }
     },
     "win": {
@@ -87,13 +88,13 @@
       "category": "Utility",
       "icon": "build/icon.png",
       "desktop": {
-        "Name": "AoE2HDBets Watcher",
-        "Comment": "AoE2HDBets replay watcher",
-        "StartupWMClass": "AoE2HDBets Watcher"
+        "Name": "AoE2DEWarWagers Watcher",
+        "Comment": "AoE2DEWarWagers replay watcher",
+        "StartupWMClass": "AoE2DEWarWagers Watcher"
       }
     },
     "dmg": {
-      "title": "AoE2HDBets Watcher",
+      "title": "AoE2DEWarWagers Watcher",
       "iconSize": 128,
       "window": {
         "width": 540,
@@ -119,8 +120,8 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "AoE2HDBets Watcher",
-      "uninstallDisplayName": "AoE2HDBets Watcher",
+      "shortcutName": "AoE2DEWarWagers Watcher",
+      "uninstallDisplayName": "AoE2DEWarWagers Watcher",
       "installerLanguages": [
         "en_US"
       ]

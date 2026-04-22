@@ -1,52 +1,93 @@
-# aoe2-watcher
+# AoE2DEWarWagers Watcher
 
-Electron helper that watches your AoE2 replay folder, emits live replay snapshots while a match is in progress, uploads the final replay when the file settles, and can scan/import older saved replays on demand.
+Electron helper that watches the Age of Empires II: Definitive Edition replay folder, emits live replay snapshots while a match is in progress, uploads the final replay when the file settles, and can scan/import older saved replays on demand.
 
-This is the client-side edge of the AoE2HDBets replay loop. It is intentionally allowed to be a little chatty while the live replay flow is still being refined.
+This is the mac-first DE watcher for AoE2DEWarWagers. The old HD watcher archive is useful as a packaging and UX blueprint only; this source must stay DE-branded and DE-wired.
 
-## What changed
+## What it owns
 
-- Firebase has been removed completely
-- uploads now go directly to `/api/replay/upload` on your configured API base
-- live watcher uploads now mark non-final replay iterations so `/live-games` and lobby-adjacent surfaces can light up before the match ends
-- uses `x-user-uid` header for identity
-- optional `x-api-key` support via `AOE2_UPLOAD_API_KEY`
-- supports one-click profile pairing through `aoe2hd-watcher://pair?apiKey=...`
-- supports `.aoe2record`, `.aoe2mpgame`, `.mgz`, `.mgx`, and `.mgl`
-- retries transient parse/upload failures automatically
-- skips duplicate re-uploads for the same finished replay
-- adds a first-class `Scan & Import Replays` flow for historical saved games
-- persists the last import summary, failed uploads, replay folder, watcher key, and auto-start preference locally
-- packages clean Windows x64 releases with both NSIS installer and portable fallback targets
-- packages a Linux AppImage fallback from the same watcher core
-- current behavior can emit multiple live iterations before a final settled upload, which is expected during active development
+- App/product name: `AoE2DEWarWagers Watcher`
+- Pairing protocol: `aoe2de-watcher://pair?apiKey=...`
+- Pairing page: `https://aoe2dewarwagers.com/profile?watcher_pair=1`
+- Primary upload endpoint: `https://api-prodn.aoe2dewarwagers.com/api/replay/upload`
+- Fallback upload endpoint: `https://aoe2dewarwagers.com/api/replay/upload`
+- mac app bundle: `AoE2DEWarWagers Watcher.app`
+- mac DMG: `dist/AoE2DEWarWagers Watcher-1.1.1-arm64.dmg`
+- mac direct ZIP: `dist/AoE2DEWarWagers-watcher-direct.zip`
+
+## Owning files
+
+- Packaging/product metadata: `package.json`
+- mac icon and entitlements: `build/icon.icns`, `build/icon.png`, `build/aoe2dewarwagers-watcher-logo.png`, `build/entitlements.mac.plist`, `build/entitlements.mac.inherit.plist`
+- Electron shell, config defaults, pairing protocol: `main.js`
+- DE replay folder discovery and upload runtime: `watcher.js`
+- Renderer defaults, support snapshot, log/status copy: `renderer.js`
+- Watcher UI shell and outbound DE links: `index.html`
+- Direct ZIP artifact layout: `scripts/build-manual-zip.mjs`
+- Notarization hook: `scripts/notarize.js`
+- Runtime/env example: `.env.example`
+- Regression checks: `watcher.test.js`
+
+## Default DE replay folder detection
+
+On macOS, auto-detect scans CrossOver bottles for the real DE Windows profile path:
+
+```text
+~/Library/Application Support/CrossOver/Bottles/<Bottle>/drive_c/users/<user>/Games/Age of Empires 2 DE/<steam-id>/savegame
+```
+
+It also checks the `AppData/Local/Games/Age of Empires 2 DE/<steam-id>/savegame` variant and native/proton-style DE profile roots. It does not fall back to HD install folders.
 
 ## Quick Start
 
 ```bash
+cd /Users/tonyblum/projects/AoE2DEWarWagers/aoe2de-watcher
 cp .env.example .env
 npm install
 npm run start
 ```
 
-`npm run start` loads `.env` automatically.
+The desktop app expects a watcher key before uploads begin. The preferred path is one-click pairing:
 
-The desktop app still expects a watcher key before uploads begin. The default path is one-click
-pairing:
+1. Launch the app.
+2. Click **Open Profile Pairing**.
+3. Approve the `aoe2de-watcher://` handoff in your browser.
 
-1. launch the app
-2. click **Open Profile Pairing**
-3. approve the `aoe2hd-watcher://` handoff in your browser
+That mints a fresh watcher key on `https://aoe2dewarwagers.com/profile?watcher_pair=1`, saves it to local app config, and auto-starts when the replay folder is known. If macOS blocks the custom URL, use **Mint Key** on `/profile` and paste the fallback key into the app once.
 
-That mints a fresh watcher key on `https://aoe2hdbets.com/profile?watcher_pair=1`, saves it to the
-local app config, and auto-starts when the replay folder is already known. If macOS blocks the
-custom URL, use **Mint Key Only** on `/profile` and paste the fallback key into the app once.
+## mac arm64 build
+
+```bash
+cd /Users/tonyblum/projects/AoE2DEWarWagers/aoe2de-watcher
+rm -rf dist
+npm ci
+npm run dist:mac
+npm run dist:manual-zip
+```
+
+Expected artifacts:
+
+```text
+dist/AoE2DEWarWagers Watcher-1.1.1-arm64.dmg
+dist/AoE2DEWarWagers Watcher-1.1.1-arm64.dmg.blockmap
+dist/AoE2DEWarWagers-watcher-direct.zip
+dist/mac-arm64/AoE2DEWarWagers Watcher.app
+dist/latest-mac.yml
+```
+
+Optional sync into the web app download rail:
+
+```bash
+cd /Users/tonyblum/projects/AoE2DEWarWagers/app-prodn
+npm run watcher:sync
+```
 
 ## Historical import
 
-The main window now includes **Scan & Import Replays**.
+The main window includes **Scan & Import Replays**.
 
-- scans the configured replay folder with the same replay extension rules the watcher trusts
+- scans the configured DE `savegame` folder
+- handles `.aoe2record` and `.aoe2mpgame`
 - processes files oldest-to-newest
 - keeps live watching available
 - shows found / queued / skipped / uploaded / failed counts
@@ -54,8 +95,9 @@ The main window now includes **Scan & Import Replays**.
 
 ## Optional environment variables
 
-- `AOE2_API_BASE_URL` (default: `https://api-prodn.aoe2hdbets.com`)
-- `AOE2_WATCH_DIR` (default: platform-specific AoE2HD SaveGame path)
+- `AOE2_API_BASE_URL` (default: `https://api-prodn.aoe2dewarwagers.com`)
+- `AOE2_API_FALLBACK_BASE_URL` (default: `https://aoe2dewarwagers.com`)
+- `AOE2_WATCH_DIR` (optional manual DE `savegame` override)
 - `WATCHER_USER_UID` (default: hostname-derived watcher id)
 - `AOE2_UPLOAD_API_KEY` (optional manual fallback; one-click pairing normally fills this in)
 - `AOE2_UPLOAD_RETRY_ATTEMPTS` (default: `4`)
@@ -66,78 +108,20 @@ The main window now includes **Scan & Import Replays**.
 - `AOE2_INITIAL_LIVE_RETRY_COOLDOWN_MS` (default: `10000`)
 - `AOE2_LIVE_UPLOAD_COOLDOWN_MS` (default: `45000`)
 
-## Optional env example
+## Verification checklist
+
+Run these before cutting a mac release:
 
 ```bash
-AOE2_API_BASE_URL=https://api-prodn.aoe2hdbets.com
-# optional if backend protection is enabled
-AOE2_UPLOAD_API_KEY=your_key_here
+cd /Users/tonyblum/projects/AoE2DEWarWagers/aoe2de-watcher
+npm test
+rg -n "AoE2HD|aoe2hd|Age2HD|Age of Empires 2 HD|hdbets|HDBets|api-prodn\\.aoe2hdbets|aoe2hdbets\\.com" package.json main.js watcher.js renderer.js index.html .env.example scripts
+rg -n "AoE2DEWarWagers Watcher|aoe2de-watcher|api-prodn\\.aoe2dewarwagers\\.com|aoe2dewarwagers\\.com|Age of Empires 2 DE" package.json main.js watcher.js renderer.js index.html .env.example scripts README.md
+npm run dist:mac
+npm run dist:manual-zip
+plutil -p "dist/mac-arm64/AoE2DEWarWagers Watcher.app/Contents/Info.plist" | rg "AoE2DEWarWagers|aoe2de-watcher|com\\.aoe2dewarwagers"
+ditto -x -k "dist/AoE2DEWarWagers-watcher-direct.zip" /tmp/aoe2dewarwagers-watcher-check
+test -d "/tmp/aoe2dewarwagers-watcher-check/AoE2DEWarWagers Watcher Direct/AoE2DEWarWagers Watcher.app"
 ```
 
-## Current behavior notes
-
-A normal successful session can look like this:
-
-1. replay file appears
-2. watcher emits one or more live uploads while the file is still growing
-3. backend may store non-final/live state first
-4. watcher waits for file quiet/stability
-5. watcher sends final replay upload
-6. backend stores final parsed replay
-
-This means multiple live iterations in logs are not automatically a bug.
-
-## Logging notes
-
-Current watcher logs are intentionally useful while building. Expect to see messages about:
-
-- file growth / quiet-period waiting
-- live iteration numbers
-- final replay upload attempts
-- transient retry behavior
-- minimum parseable-size thresholds
-
-That noise is acceptable during active development because it makes replay timing issues much easier to understand.
-
-## Build (macOS release)
-
-```bash
-npm run dist:release
-```
-
-`npm run dist:release` builds:
-
-- the signed-state-pending DMG
-- a Direct ZIP that contains the same `AoE2HDBets Watcher.app` bundle as the DMG
-
-The Direct ZIP is the legitimate fallback while Apple signing and notarization are offline. It is
-not a reduced feature path.
-
-## Build (Windows x64 from macOS)
-
-If Wine is not installed locally, use Docker with the Electron Builder Wine image:
-
-```bash
-docker run --rm --platform=linux/amd64 \
-  -e ELECTRON_CACHE=/root/.cache/electron \
-  -e ELECTRON_BUILDER_CACHE=/root/.cache/electron-builder \
-  -v "$PWD":/project \
-  -w /project \
-  electronuserland/builder:wine \
-  /bin/bash -lc 'npm ci && npx electron-builder --win nsis portable --x64'
-```
-
-That produces:
-
-- Windows NSIS installer
-- Windows portable fallback executable
-
-## Build (Linux AppImage)
-
-```bash
-npm run dist:linux
-```
-
-That produces:
-
-- Linux AppImage package
+The second command should produce no source hits. The later checks prove the bundle name, protocol, app id, DMG, ZIP, and runtime source strings are DE-native.

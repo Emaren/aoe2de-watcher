@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>AoE2HDBets Watcher</title>
+    <title>AoE2DEWarWagers Watcher</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <style>
       :root {
@@ -799,18 +799,18 @@
       <main class="shell">
         <section class="card hero">
           <div>
-            <div class="eyebrow">AoE2HDBets / Watcher</div>
+            <div class="eyebrow">AoE2DEWarWagers / Watcher</div>
             <h1>Clean live watching. Easy replay history imports.</h1>
             <p class="subhead">
-              Built to feel like real AoE2HDBets software, not a dev utility. Pair once, point
-              it at your SaveGame folder, and either watch new replays live or scan the whole
+              Built to feel like real AoE2DEWarWagers software, not a dev utility. Pair once,
+              point it at your DE savegame folder, and either watch new replays live or scan the whole
               folder to bring older matches online.
             </p>
 
             <div class="chip-row">
-              <div class="chip accent">Windows x64 release</div>
-              <div class="chip">NSIS installer</div>
-              <div class="chip">Portable fallback</div>
+              <div class="chip accent">macOS arm64 release</div>
+              <div class="chip">DMG installer</div>
+              <div class="chip">Direct ZIP fallback</div>
               <div class="chip">Historical imports</div>
               <div class="chip">Live replay watching</div>
               <div class="chip">Manual key fallback</div>
@@ -830,7 +830,7 @@
             <div class="helper-links">
               <a
                 class="button ghost slim"
-                href="https://aoe2hdbets.com/profile?watcher_pair=1"
+                href="https://aoe2dewarwagers.com/profile?watcher_pair=1"
                 target="_blank"
                 rel="noreferrer"
               >
@@ -838,7 +838,7 @@
               </a>
               <a
                 class="button ghost slim"
-                href="https://aoe2hdbets.com/profile"
+                href="https://aoe2dewarwagers.com/profile"
                 target="_blank"
                 rel="noreferrer"
               >
@@ -846,7 +846,7 @@
               </a>
               <a
                 class="button ghost slim"
-                href="https://aoe2hdbets.com/download"
+                href="https://aoe2dewarwagers.com/download"
                 target="_blank"
                 rel="noreferrer"
               >
@@ -855,8 +855,8 @@
             </div>
 
             <div class="notice">
-              Unsigned builds are expected right now. If Windows SmartScreen gets in the way,
-              the portable fallback is still a first-class path, and manual watcher-key entry
+              Unsigned builds are expected right now. If macOS Gatekeeper gets in the way,
+              the direct ZIP fallback is still a first-class path, and manual watcher-key entry
               keeps pairing from depending on the browser handoff.
             </div>
           </div>
@@ -866,7 +866,7 @@
               <div class="metric-label">Replay Folder</div>
               <div id="folderReadyText" class="metric-value missing">Folder missing</div>
               <div id="folderPathText" class="metric-copy">
-                Choose or auto-detect the SaveGame folder.
+                Choose or auto-detect the DE savegame folder.
               </div>
             </article>
 
@@ -913,9 +913,9 @@
                 <div class="field-shell">
                   <div class="field">
                     <label for="watchDirInput">Replay folder</label>
-                    <input id="watchDirInput" type="text" placeholder="Choose your AoE2 SaveGame folder" />
+                    <input id="watchDirInput" type="text" placeholder="Choose your AoE2DE savegame folder" />
                     <div class="field-caption">
-                      Point this at the AoE2 SaveGame directory. Historical import uses the same
+                      Point this at the AoE2DE savegame directory. Historical import uses the same
                       replay rules as live watching.
                     </div>
                   </div>
@@ -955,7 +955,7 @@
                       <input
                         id="apiBaseUrlInput"
                         type="text"
-                        placeholder="https://api-prodn.aoe2hdbets.com"
+                        placeholder="https://api-prodn.aoe2dewarwagers.com"
                       />
                     </div>
 
@@ -964,7 +964,7 @@
                       <input
                         id="apiFallbackBaseUrlInput"
                         type="text"
-                        placeholder="https://aoe2hdbets.com"
+                        placeholder="https://aoe2dewarwagers.com"
                       />
                     </div>
 
@@ -989,7 +989,7 @@
                   <div class="eyebrow">Historical Import</div>
                   <h2>Scan &amp; Import Replays</h2>
                   <p class="panel-copy">
-                    This scans the configured SaveGame folder, queues supported replay files
+                    This scans the configured DE savegame folder, queues supported replay files
                     oldest-to-newest, leans on the backend’s replay-hash dedupe, and keeps the UI
                     responsive while it runs.
                   </p>
@@ -1001,7 +1001,7 @@
                   <div>
                     <div id="importPhaseText" class="progress-title">Historical import</div>
                     <div id="importDetailText" class="progress-copy">
-                      Scan the SaveGame folder to import older replays while live watching stays available.
+                      Scan the DE savegame folder to import older replays while live watching stays available.
                     </div>
                   </div>
 
@@ -1096,7 +1096,7 @@
                 </div>
                 <div class="diagnostic-row">
                   <strong>Primary API</strong>
-                  <span id="apiHostText">https://api-prodn.aoe2hdbets.com</span>
+                  <span id="apiHostText">https://api-prodn.aoe2dewarwagers.com</span>
                 </div>
                 <div class="diagnostic-row">
                   <strong>Configured replay folder</strong>
@@ -1104,7 +1104,7 @@
                 </div>
                 <div class="diagnostic-row">
                   <strong>Supported replay extensions</strong>
-                  <span id="supportedExtensionsText">.aoe2record, .aoe2mpgame, .mgz, .mgx, .mgl</span>
+                  <span id="supportedExtensionsText">.aoe2record, .aoe2mpgame</span>
                 </div>
               </div>
 
@@ -1126,7 +1126,7 @@
                   <div class="helper-pill">Preferred</div>
                   <h3 style="margin-top: 12px">Profile Pairing</h3>
                   <p>
-                    Open Profile Pairing from AoE2HDBets and let the browser hand the watcher key
+                    Open Profile Pairing from AoE2DEWarWagers and let the browser hand the watcher key
                     straight to the app.
                   </p>
                 </div>
@@ -1144,8 +1144,8 @@
                   <div class="helper-pill">Installer backup</div>
                   <h3 style="margin-top: 12px">Portable fallback</h3>
                   <p>
-                    If the installer hits SmartScreen friction, the portable build still runs the same
-                    watcher with the same upload flow.
+                    If the DMG hits Gatekeeper friction, the direct ZIP still runs the same watcher
+                    with the same upload flow.
                   </p>
                 </div>
               </div>

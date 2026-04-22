@@ -49,8 +49,8 @@ const els = {
 
 const DEFAULT_CONFIG = {
   watchDir: "",
-  apiBaseUrl: "https://api-prodn.aoe2hdbets.com",
-  apiFallbackBaseUrl: "https://aoe2hdbets.com",
+  apiBaseUrl: "https://api-prodn.aoe2dewarwagers.com",
+  apiFallbackBaseUrl: "https://aoe2dewarwagers.com",
   uploadApiKey: "",
   autoStartWatching: true,
   lastImportSummary: null,
@@ -230,7 +230,7 @@ function getPrimaryStatus() {
       detail:
         importState.currentFile && importState.queued > 0
           ? `Working through ${importState.currentIndex} of ${importState.queued}: ${importState.currentFile}`
-          : "Uploading replay history to AoE2HDBets.",
+          : "Uploading replay history to AoE2DEWarWagers.",
       kind: "success",
     };
   }
@@ -238,7 +238,7 @@ function getPrimaryStatus() {
   if (runtimeState.phase === "uploading") {
     return {
       label: "Uploading replay",
-      detail: runtimeState.detail || "Sending replay data to AoE2HDBets.",
+      detail: runtimeState.detail || "Sending replay data to AoE2DEWarWagers.",
       kind: "success",
     };
   }
@@ -263,8 +263,8 @@ function getPrimaryStatus() {
     return {
       label: "Replay folder missing",
       detail: hasReplayFolder()
-        ? "The saved path is not a valid AoE2 SaveGame folder right now. Choose the real folder to continue."
-        : "Choose the AoE2 SaveGame folder to continue.",
+        ? "The saved path is not a valid AoE2DE savegame folder right now. Choose the real folder to continue."
+        : "Choose the AoE2DE savegame folder to continue.",
       kind: "warn",
     };
   }
@@ -322,11 +322,11 @@ function getSetupSummaryText() {
   }
 
   if (!isReplayFolderReady()) {
-    return "Watcher key looks good. Choose the AoE2 SaveGame folder next so live watching and import can run cleanly.";
+    return "Watcher key looks good. Choose the AoE2DE savegame folder next so live watching and import can run cleanly.";
   }
 
   if (!hasWatcherKey()) {
-    return "Replay folder is ready. Pair now from your AoE2HDBets profile, or paste a watcher key manually and save once.";
+    return "Replay folder is ready. Pair now from your AoE2DEWarWagers profile, or paste a watcher key manually and save once.";
   }
 
   if (importState.isRunning) {
@@ -350,7 +350,7 @@ function renderReadiness() {
     ? shortenPath(readForm().watchDir)
     : hasReplayFolder()
       ? shortenPath(readForm().watchDir)
-      : "Choose or auto-detect the SaveGame folder.";
+      : "Choose or auto-detect the DE savegame folder.";
 
   setReadinessState(els.keyReadyText, keyReady);
   els.keyReadyText.textContent = keyReady ? "Watcher key saved" : "Watcher key missing";
@@ -389,14 +389,14 @@ function renderDiagnostics() {
   els.apiHostText.textContent = readForm().apiBaseUrl || DEFAULT_CONFIG.apiBaseUrl;
   els.replayPathDiagText.textContent = shortenPath(readForm().watchDir, "Not chosen yet");
   els.supportedExtensionsText.textContent =
-    appInfo?.supportedReplayExtensions?.join(", ") || ".aoe2record, .aoe2mpgame, .mgz, .mgx, .mgl";
+    appInfo?.supportedReplayExtensions?.join(", ") || ".aoe2record, .aoe2mpgame";
 }
 
 function describeImportPhase() {
   if (importState.isRunning && importState.phase === "scanning") {
     return {
       title: "Scanning folder",
-      detail: "Reading the configured SaveGame folder and building a safe replay queue.",
+      detail: "Reading the configured DE savegame folder and building a safe replay queue.",
     };
   }
 
@@ -437,7 +437,7 @@ function describeImportPhase() {
 
   return {
     title: "Historical import",
-    detail: "Scan the SaveGame folder to import older replays while live watching stays available.",
+    detail: "Scan the DE savegame folder to import older replays while live watching stays available.",
   };
 }
 
@@ -587,7 +587,7 @@ function buildSupportSnapshot() {
   const config = readForm();
 
   return [
-    `Product: ${appInfo?.productName || "AoE2HDBets Watcher"}`,
+    `Product: ${appInfo?.productName || "AoE2DEWarWagers Watcher"}`,
     `Version: ${appInfo?.version || "Unknown"}`,
     `Platform: ${formatPlatform(appInfo?.platform)}`,
     `Status: ${primaryStatus.label}`,
@@ -609,7 +609,7 @@ function consumeRuntimeEvent(event) {
     case "watching-started":
     case "watcher-ready":
       runtimeState.phase = "watching";
-      runtimeState.detail = "Watching for new replay files in the configured SaveGame folder.";
+      runtimeState.detail = "Watching for new replay files in the configured DE savegame folder.";
       runtimeState.activeUpload = null;
       break;
     case "replay-detected":
@@ -735,7 +735,7 @@ els.startWatchingBtn.addEventListener("click", async () => {
 
     if (!folderStatus.exists) {
       setStatus(
-        "Replay folder is missing. Choose the real SaveGame folder before starting.",
+        "Replay folder is missing. Choose the real DE savegame folder before starting.",
         "error",
         { sticky: true }
       );
