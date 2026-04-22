@@ -5,7 +5,9 @@ const path = require("node:path");
 const test = require("node:test");
 
 const {
+  buildWatcherFinalMetadata,
   buildRuntimeConfig,
+  findWatcherMetadataSidecarPath,
   getFileFingerprint,
   getDefaultReplayDir,
   getReplayContentHash,
@@ -17,6 +19,8 @@ function buildEntry(overrides = {}) {
   return {
     monitoring: false,
     importing: false,
+    firstObservedAt: "2026-04-22T18:00:00.000Z",
+    sessionId: null,
     lastObservedFingerprint: null,
     lastChangeAt: 0,
     lastLiveAttemptAt: 0,
@@ -38,6 +42,17 @@ async function createTempReplay(t, content) {
   });
 
   const filePath = path.join(tempDir, "test-replay.aoe2record");
+  await fs.writeFile(filePath, content);
+  return filePath;
+}
+
+async function createTempReplayNamed(t, fileName, content) {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "aoe2-watcher-"));
+  t.after(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const filePath = path.join(tempDir, fileName);
   await fs.writeFile(filePath, content);
   return filePath;
 }
@@ -153,6 +168,102 @@ test("runtime defaults point to the DE API stack", () => {
 
 test("watcher imports DE replay extensions only", () => {
   assert.deepEqual(getSupportedReplayExtensions(), [".aoe2record", ".aoe2mpgame"]);
+});
+
+test("builds conservative final watcher metadata from file observation", async (t) => {
+  const filePath = await createTempReplayNamed(
+    t,
+    "MP Replay v101.102.999 @2026.04.22 183000.aoe2record",
+    Buffer.from("final replay bytes")
+  );
+  const replayHash = await getReplayContentHash(filePath);
+  const entry = buildEntry();
+
+  const metadata = await buildWatcherFinalMetadata(
+    filePath,
+    {
+      watcherUid: "watcher-test",
+    },
+    entry,
+    {
+      replayHash,
+      parseIteration: 3,
+    }
+  );
+
+  assert.equal(metadata.schema, "aoe2dewarwagers.watcher_final_metadata.v1");
+  assert.equal(metadata.version, 1);
+  assert.equal(metadata.replay_hash, replayHash);
+  assert.equal(metadata.filename, path.basename(filePath));
+  assert.equal(metadata.session_id, entry.sessionId);
+  assert.equal(metadata.started_at, new Date(2026, 3, 22, 18, 30, 0).toISOString());
+  assert.equal(metadata.parse_iteration, 3);
+  assert.deepEqual(metadata.players, []);
+  assert.equal(metadata.player_count, null);
+  assert.equal(metadata.winner.reliable, false);
+  assert.equal(metadata.trust.trusted_player_data, false);
+  assert.equal(metadata.trust.replay_parser, false);
+  assert.equal(metadata.trust.bet_arming_eligible, false);
+  assert.deepEqual(metadata.metadata_sources, ["watcher_file_observation"]);
+});
+
+test("merges explicit local metadata sidecar without claiming bet eligibility", async (t) => {
+  const filePath = await createTempReplayNamed(
+    t,
+    "sidecar-test.aoe2record",
+    Buffer.from("sidecar replay")
+  );
+  const sidecarPath = `${filePath}.metadata.json`;
+  await fs.writeFile(
+    sidecarPath,
+    JSON.stringify({
+      session_id: "local-session",
+      lobby_id: "lobby-42",
+      started_at: "2026-04-22T18:30:00Z",
+      ended_at: "2026-04-22T19:00:00Z",
+      players: [
+        { name: "Emaren", civ: "Britons", color: "Blue", team: 1 },
+        { name: "Sniper", civ: "Franks", color: "Red", team: 2 },
+      ],
+      map: { name: "Arabia", size: "Tiny" },
+      mode: "Random Map",
+      rated: true,
+      winner: { name: "Emaren", reliable: true },
+      trust: { trusted_player_data: true, winner: true },
+    }),
+    "utf8"
+  );
+
+  const replayHash = await getReplayContentHash(filePath);
+  const metadata = await buildWatcherFinalMetadata(
+    filePath,
+    {
+      watcherUid: "watcher-test",
+    },
+    buildEntry(),
+    {
+      replayHash,
+      parseIteration: 1,
+    }
+  );
+
+  assert.equal(findWatcherMetadataSidecarPath(filePath), sidecarPath);
+  assert.equal(metadata.session_id, "local-session");
+  assert.equal(metadata.lobby_id, "lobby-42");
+  assert.equal(metadata.player_count, 2);
+  assert.equal(metadata.players[0].name, "Emaren");
+  assert.equal(metadata.players[0].civ, "Britons");
+  assert.equal(metadata.map.name, "Arabia");
+  assert.equal(metadata.winner.name, "Emaren");
+  assert.equal(metadata.winner.reliable, true);
+  assert.equal(metadata.trust.trusted_player_data, true);
+  assert.equal(metadata.trust.winner, true);
+  assert.equal(metadata.trust.replay_parser, false);
+  assert.equal(metadata.trust.bet_arming_eligible, false);
+  assert.deepEqual(metadata.metadata_sources, [
+    "watcher_file_observation",
+    "local_metadata_sidecar",
+  ]);
 });
 
 test("short-circuits when the replay fingerprint is already settled", async (t) => {

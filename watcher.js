@@ -11,6 +11,9 @@ const IMPORT_STABILITY_CHECK_MS = 1200;
 const IMPORT_ITEM_LIMIT = 75;
 const DEFAULT_API_BASE_URL = "https://api-prodn.aoe2dewarwagers.com";
 const DEFAULT_API_FALLBACK_BASE_URL = "https://aoe2dewarwagers.com";
+const WATCHER_METADATA_SCHEMA = "aoe2dewarwagers.watcher_final_metadata.v1";
+const WATCHER_METADATA_VERSION = 1;
+const MAX_METADATA_SIDECAR_BYTES = 256 * 1024;
 const DE_PROFILE_ROOT_SEGMENTS = ["Games", "Age of Empires 2 DE"];
 const DE_LOCAL_PROFILE_ROOT_SEGMENTS = ["AppData", "Local", "Games", "Age of Empires 2 DE"];
 const DE_SAVEGAME_DIR_NAMES = ["savegame", "SaveGame"];
@@ -288,12 +291,309 @@ async function getReplayContentHash(filePath) {
   });
 }
 
+function stableHash(value, length = 24) {
+  return crypto.createHash("sha256").update(String(value || "")).digest("hex").slice(0, length);
+}
+
+function cleanString(value, maxLength = 255) {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  return value.replace(/\s+/g, " ").trim().slice(0, maxLength);
+}
+
+function toIso(value) {
+  if (!value) {
+    return null;
+  }
+
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return date.toISOString();
+}
+
+function parseReplayTimestampFromFilename(fileName) {
+  const match = String(fileName || "").match(
+    /@(\d{4})[.-](\d{2})[.-](\d{2})[ T_-]?(\d{2})(\d{2})(\d{2})?/
+  );
+  if (!match) {
+    return null;
+  }
+
+  const [, year, month, day, hour, minute, second = "00"] = match;
+  return toIso(
+    new Date(
+      Number(year),
+      Number(month) - 1,
+      Number(day),
+      Number(hour),
+      Number(minute),
+      Number(second)
+    )
+  );
+}
+
+function getPotentialMetadataSidecarPaths(filePath) {
+  const parsed = path.parse(filePath);
+  return [
+    `${filePath}.metadata.json`,
+    `${filePath}.json`,
+    path.join(parsed.dir, `${parsed.name}.metadata.json`),
+    path.join(parsed.dir, `${parsed.name}.json`),
+  ];
+}
+
+function findWatcherMetadataSidecarPath(filePath) {
+  return (
+    getPotentialMetadataSidecarPaths(filePath).find((candidate) => {
+      try {
+        const stats = fs.statSync(candidate);
+        return stats.isFile() && stats.size <= MAX_METADATA_SIDECAR_BYTES;
+      } catch {
+        return false;
+      }
+    }) || null
+  );
+}
+
+async function readWatcherMetadataSidecar(filePath) {
+  const sidecarPath = findWatcherMetadataSidecarPath(filePath);
+  if (!sidecarPath) {
+    return null;
+  }
+
+  try {
+    const raw = await fs.promises.readFile(sidecarPath, "utf8");
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      log(`Ignored metadata sidecar with non-object payload: ${path.basename(sidecarPath)}`, "warn");
+      return null;
+    }
+
+    return {
+      sidecarPath,
+      payload: parsed,
+    };
+  } catch (error) {
+    log(`Failed to read metadata sidecar for ${path.basename(filePath)}: ${error.message}`, "warn");
+    return null;
+  }
+}
+
+function readObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function readBoolean(value) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["1", "true", "yes", "y", "on"].includes(normalized)) return true;
+    if (["0", "false", "no", "n", "off"].includes(normalized)) return false;
+  }
+  return null;
+}
+
+function readPositiveNumber(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+}
+
+function normalizeSidecarPlayers(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((entry, index) => {
+      const player = readObject(entry);
+      const name = cleanString(player.name || player.player_name || player.profile_name);
+      if (!name) {
+        return null;
+      }
+
+      const normalized = {
+        name,
+        source: "local_metadata_sidecar",
+      };
+
+      const civ = cleanString(player.civ || player.civilization || player.civilization_name, 80);
+      const color = cleanString(player.color || player.color_name, 40);
+      const team = cleanString(String(player.team ?? player.team_id ?? ""), 40);
+      const slot = readPositiveNumber(player.slot || player.number || player.player_number);
+      const steamId = cleanString(player.steam_id || player.user_id || player.profile_id, 64);
+      const winner = readBoolean(player.winner);
+
+      if (civ) normalized.civ = civ;
+      if (color) normalized.color = color;
+      if (team) normalized.team = team;
+      normalized.slot = slot !== null ? slot : index + 1;
+      if (steamId) normalized.user_id = steamId;
+      if (winner !== null) normalized.winner = winner;
+
+      return normalized;
+    })
+    .filter(Boolean);
+}
+
+function normalizeSidecarWinner(value) {
+  if (typeof value === "string") {
+    return {
+      name: cleanString(value, 100),
+      reliable: false,
+      source: "local_metadata_sidecar",
+    };
+  }
+
+  const winner = readObject(value);
+  return {
+    name: cleanString(winner.name || winner.player_name || winner.value, 100),
+    reliable: readBoolean(winner.reliable ?? winner.trusted) === true,
+    source: cleanString(winner.source, 80) || "local_metadata_sidecar",
+  };
+}
+
+function mergeLocalMetadataSidecar(metadata, sidecar) {
+  if (!sidecar?.payload) {
+    return metadata;
+  }
+
+  const payload = sidecar.payload;
+  const mapPayload = readObject(payload.map);
+  const trustPayload = readObject(payload.trust || payload.trust_flags);
+  const winnerPayload = normalizeSidecarWinner(payload.winner);
+  const players = normalizeSidecarPlayers(payload.players);
+  const rated = readBoolean(payload.rated ?? payload.is_rated);
+  const playerCount = readPositiveNumber(payload.player_count ?? payload.players_count);
+  const mode = cleanString(payload.mode || payload.game_mode || payload.game_type, 80);
+  const lobbyId = cleanString(payload.lobby_id || payload.lobbyId || payload.match_id, 120);
+  const sessionId = cleanString(payload.session_id || payload.sessionId, 120);
+  const mapName = cleanString(mapPayload.name || payload.map_name, 120);
+  const mapSize = cleanString(mapPayload.size || payload.map_size, 80);
+  const startedAt = toIso(payload.started_at || payload.startedAt);
+  const endedAt = toIso(payload.ended_at || payload.endedAt);
+
+  const next = {
+    ...metadata,
+    metadata_sources: [...new Set([...metadata.metadata_sources, "local_metadata_sidecar"])],
+    local_sidecar_filename: path.basename(sidecar.sidecarPath),
+  };
+
+  if (sessionId) next.session_id = sessionId;
+  if (lobbyId) next.lobby_id = lobbyId;
+  if (startedAt) next.started_at = startedAt;
+  if (endedAt) next.ended_at = endedAt;
+  if (mode) next.mode = mode;
+  if (rated !== null) next.rated = rated;
+  if (playerCount !== null) next.player_count = playerCount;
+  if (players.length > 0) {
+    next.players = players;
+    next.player_count = players.length;
+  }
+  if (mapName || mapSize) {
+    next.map = {
+      ...(metadata.map || {}),
+      ...(mapName ? { name: mapName } : {}),
+      ...(mapSize ? { size: mapSize } : {}),
+    };
+  }
+  if (winnerPayload.name) {
+    next.winner = winnerPayload;
+  }
+
+  next.trust = {
+    ...metadata.trust,
+    trusted_player_data:
+      readBoolean(trustPayload.trusted_player_data ?? trustPayload.player_data) === true,
+    winner:
+      readBoolean(trustPayload.winner ?? trustPayload.winner_reliable) === true ||
+      winnerPayload.reliable === true,
+    replay_parser: false,
+    bet_arming_eligible: false,
+  };
+
+  return next;
+}
+
+async function buildWatcherFinalMetadata(
+  filePath,
+  runtimeConfig,
+  entry,
+  { replayHash, parseIteration = 1 } = {}
+) {
+  const stats = await fs.promises.stat(filePath);
+  const uploadedAt = new Date();
+  const fileName = path.basename(filePath);
+  const firstObservedAt = entry.firstObservedAt || uploadedAt.toISOString();
+  const sessionId =
+    entry.sessionId ||
+    `watcher-${stableHash(
+      [
+        runtimeConfig.watcherUid,
+        fileName,
+        stats.birthtimeMs > 0 ? Math.floor(stats.birthtimeMs) : "",
+        firstObservedAt,
+      ].join(":")
+    )}`;
+
+  entry.sessionId = sessionId;
+  entry.firstObservedAt = firstObservedAt;
+
+  const metadata = {
+    schema: WATCHER_METADATA_SCHEMA,
+    version: WATCHER_METADATA_VERSION,
+    metadata_sources: ["watcher_file_observation"],
+    metadata_source: "watcher_file_observation",
+    replay_hash: replayHash || null,
+    watcher_uid: runtimeConfig.watcherUid,
+    session_id: sessionId,
+    lobby_id: null,
+    filename: fileName,
+    original_filename: fileName,
+    parse_iteration: parseIteration,
+    started_at:
+      parseReplayTimestampFromFilename(fileName) ||
+      toIso(stats.birthtimeMs > 0 ? stats.birthtime : null) ||
+      firstObservedAt,
+    ended_at: toIso(stats.mtime),
+    uploaded_at: toIso(uploadedAt),
+    file_size_bytes: stats.size,
+    players: [],
+    player_count: null,
+    map: null,
+    mode: null,
+    rated: null,
+    winner: {
+      name: null,
+      reliable: false,
+      source: null,
+    },
+    trust: {
+      file_observation: true,
+      trusted_player_data: false,
+      winner: false,
+      replay_parser: false,
+      bet_arming_eligible: false,
+    },
+  };
+
+  return mergeLocalMetadataSidecar(metadata, await readWatcherMetadataSidecar(filePath));
+}
+
 function getStateEntry(filePath) {
   let entry = activeUploadState.get(filePath);
   if (!entry) {
     entry = {
       monitoring: false,
       importing: false,
+      firstObservedAt: new Date().toISOString(),
+      sessionId: null,
       lastObservedFingerprint: null,
       lastChangeAt: 0,
       lastLiveAttemptAt: 0,
@@ -584,7 +884,7 @@ async function resolveFinalReplayShortCircuit(
 async function uploadReplay(
   filePath,
   runtimeConfig,
-  { parseIteration = 1, isFinal = true, uploadUrl } = {}
+  { parseIteration = 1, isFinal = true, uploadUrl, metadata = null } = {}
 ) {
   const replayBuffer = await fs.promises.readFile(filePath);
 
@@ -594,6 +894,11 @@ async function uploadReplay(
     contentType: "application/octet-stream",
     knownLength: replayBuffer.length,
   });
+  if (metadata) {
+    form.append("metadata", JSON.stringify(metadata), {
+      contentType: "application/json",
+    });
+  }
 
   const headers = {
     ...form.getHeaders(),
@@ -603,6 +908,9 @@ async function uploadReplay(
     "x-parse-source": isFinal ? "watcher_final" : "watcher_live",
     "x-parse-reason": isFinal ? "watcher_final_submission" : "watcher_live_iteration",
   };
+  if (metadata) {
+    headers["x-watcher-metadata-version"] = String(metadata.version || WATCHER_METADATA_VERSION);
+  }
 
   if (runtimeConfig.uploadApiKey) {
     headers["x-api-key"] = runtimeConfig.uploadApiKey;
@@ -682,10 +990,19 @@ async function uploadReplayWithRetry(
 
       try {
         attemptFingerprint = await getFileFingerprint(filePath);
+        let metadata = null;
+        if (isFinal) {
+          const replayHash = await getReplayContentHash(filePath);
+          metadata = await buildWatcherFinalMetadata(filePath, runtimeConfig, entry, {
+            replayHash,
+            parseIteration,
+          });
+        }
         const res = await uploadReplay(filePath, runtimeConfig, {
           parseIteration,
           isFinal,
           uploadUrl: target.uploadUrl,
+          metadata,
         });
         const detail = formatResponseBody(res.data);
         const resultType = classifyUploadResult(detail);
@@ -1405,8 +1722,10 @@ function startWatching(config = {}, hooks = {}) {
 }
 
 module.exports = {
+  buildWatcherFinalMetadata,
   buildRuntimeConfig,
   classifyUploadResult,
+  findWatcherMetadataSidecarPath,
   getDefaultReplayDir,
   getFileFingerprint,
   getRetryDelayMs: (attempt, config = {}) =>
