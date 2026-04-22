@@ -191,8 +191,8 @@ test("builds conservative final watcher metadata from file observation", async (
     }
   );
 
-  assert.equal(metadata.schema, "aoe2dewarwagers.watcher_final_metadata.v1");
-  assert.equal(metadata.version, 1);
+  assert.equal(metadata.schema, "aoe2dewarwagers.watcher_final_metadata.v2");
+  assert.equal(metadata.version, 2);
   assert.equal(metadata.replay_hash, replayHash);
   assert.equal(metadata.filename, path.basename(filePath));
   assert.equal(metadata.session_id, entry.sessionId);
@@ -204,7 +204,134 @@ test("builds conservative final watcher metadata from file observation", async (
   assert.equal(metadata.trust.trusted_player_data, false);
   assert.equal(metadata.trust.replay_parser, false);
   assert.equal(metadata.trust.bet_arming_eligible, false);
-  assert.deepEqual(metadata.metadata_sources, ["watcher_file_observation"]);
+  assert.equal(metadata.game_version.value, "101.102.999");
+  assert.equal(metadata.game_version.source, "replay_filename");
+  assert.deepEqual(metadata.metadata_sources, [
+    "watcher_file_observation",
+    "replay_filename_version",
+  ]);
+});
+
+test("enriches final metadata from DE runtime context without inventing roster truth", async (t) => {
+  const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), "aoe2de-runtime-"));
+  t.after(async () => {
+    await fs.rm(tempHome, { recursive: true, force: true });
+  });
+
+  const driveRoot = path.join(
+    tempHome,
+    "Library",
+    "Application Support",
+    "CrossOver",
+    "Bottles",
+    "Steam",
+    "drive_c"
+  );
+  const deRoot = path.join(
+    driveRoot,
+    "users",
+    "crossover",
+    "Games",
+    "Age of Empires 2 DE"
+  );
+  const savegameDir = await mkdirp(path.join(deRoot, "76561198065420384", "savegame"));
+  const logsDir = await mkdirp(path.join(deRoot, "logs"));
+  await fs.writeFile(
+    path.join(logsDir, "Age2SessionData.txt"),
+    [
+      "PlayerSessionID = rW3tBeqIJ0iJqmrmXcheQg==",
+      "Version = 101.103.39862.0 #(170934)",
+      "Config = Retail",
+      "Stream = release_build_machine",
+    ].join("\n"),
+    "utf8"
+  );
+
+  const mainLogDir = await mkdirp(path.join(logsDir, "2026.04.22-1830.00"));
+  await fs.writeFile(
+    path.join(mainLogDir, "MainLog.txt"),
+    [
+      "[rlink - error] 2026/04/23 00:45:12.315 (UTC) SteamLobbyList::RemoveLobby: Attempt to remove nonexistent lobby; sessionId=472207598",
+      "[rlink - error] 2026/04/23 00:45:12.805 (UTC) SteamLobbyList::RemoveLobby: Attempt to remove nonexistent lobby; sessionId=472207557",
+    ].join("\n"),
+    "utf8"
+  );
+
+  const steamConfigDir = await mkdirp(
+    path.join(driveRoot, "Program Files (x86)", "Steam", "config")
+  );
+  await fs.writeFile(
+    path.join(steamConfigDir, "loginusers.vdf"),
+    [
+      '"users"',
+      "{",
+      '  "76561198065420384"',
+      "  {",
+      '    "AccountName" "private-account-name"',
+      '    "PersonaName" "Emaren"',
+      "  }",
+      "}",
+    ].join("\n"),
+    "utf8"
+  );
+
+  const filePath = path.join(
+    savegameDir,
+    "MP Replay v101.103.39862.0 @2026.04.22 183000.aoe2record"
+  );
+  await fs.writeFile(filePath, Buffer.from("runtime replay"));
+  const replayEndedAt = new Date(2026, 3, 22, 19, 5, 0);
+  await fs.utimes(filePath, replayEndedAt, replayEndedAt);
+
+  const replayHash = await getReplayContentHash(filePath);
+  const metadata = await buildWatcherFinalMetadata(
+    filePath,
+    {
+      watcherUid: "watcher-test",
+    },
+    buildEntry(),
+    {
+      replayHash,
+      parseIteration: 4,
+    }
+  );
+
+  assert.equal(metadata.schema, "aoe2dewarwagers.watcher_final_metadata.v2");
+  assert.equal(metadata.version, 2);
+  assert.equal(metadata.lobby_id, null);
+  assert.deepEqual(metadata.players, []);
+  assert.equal(metadata.player_count, null);
+  assert.equal(metadata.local_player.steam64, "76561198065420384");
+  assert.equal(metadata.local_player.persona_name, "Emaren");
+  assert.equal(metadata.local_player.source, "steam_loginusers");
+  assert.equal(metadata.de_runtime.profile_id, "76561198065420384");
+  assert.equal(metadata.de_runtime.player_session_id, "rW3tBeqIJ0iJqmrmXcheQg==");
+  assert.equal(metadata.game_version.value, "101.103.39862.0");
+  assert.equal(metadata.game_version.build, "170934");
+  assert.equal(metadata.game_version.source, "Age2SessionData.txt");
+  assert.equal(metadata.candidate_lobby_ids.length, 2);
+  assert.deepEqual(
+    metadata.candidate_lobby_ids.map((candidate) => ({
+      id: candidate.id,
+      confidence: candidate.confidence,
+      source: candidate.source,
+    })),
+    [
+      { id: "472207598", confidence: "low", source: "de_mainlog" },
+      { id: "472207557", confidence: "low", source: "de_mainlog" },
+    ]
+  );
+  assert.equal(metadata.trust.de_runtime_context, true);
+  assert.equal(metadata.trust.local_player_identity, true);
+  assert.equal(metadata.trust.candidate_lobby_id, false);
+  assert.equal(metadata.trust.trusted_player_data, false);
+  assert.equal(metadata.trust.winner, false);
+  assert.equal(metadata.trust.replay_parser, false);
+  assert.equal(metadata.trust.bet_arming_eligible, false);
+  assert.ok(metadata.metadata_sources.includes("de_profile_context"));
+  assert.ok(metadata.metadata_sources.includes("de_session_data"));
+  assert.ok(metadata.metadata_sources.includes("steam_loginusers"));
+  assert.ok(metadata.metadata_sources.includes("de_log_candidate_lobby"));
 });
 
 test("merges explicit local metadata sidecar without claiming bet eligibility", async (t) => {

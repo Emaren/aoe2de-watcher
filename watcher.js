@@ -11,9 +11,12 @@ const IMPORT_STABILITY_CHECK_MS = 1200;
 const IMPORT_ITEM_LIMIT = 75;
 const DEFAULT_API_BASE_URL = "https://api-prodn.aoe2dewarwagers.com";
 const DEFAULT_API_FALLBACK_BASE_URL = "https://aoe2dewarwagers.com";
-const WATCHER_METADATA_SCHEMA = "aoe2dewarwagers.watcher_final_metadata.v1";
-const WATCHER_METADATA_VERSION = 1;
+const WATCHER_METADATA_SCHEMA = "aoe2dewarwagers.watcher_final_metadata.v2";
+const WATCHER_METADATA_VERSION = 2;
 const MAX_METADATA_SIDECAR_BYTES = 256 * 1024;
+const MAX_DE_LOG_BYTES = 2 * 1024 * 1024;
+const MAX_CANDIDATE_LOBBY_IDS = 12;
+const DE_LOBBY_TIME_WINDOW_MS = 6 * 60 * 60 * 1000;
 const DE_PROFILE_ROOT_SEGMENTS = ["Games", "Age of Empires 2 DE"];
 const DE_LOCAL_PROFILE_ROOT_SEGMENTS = ["AppData", "Local", "Games", "Age of Empires 2 DE"];
 const DE_SAVEGAME_DIR_NAMES = ["savegame", "SaveGame"];
@@ -337,6 +340,375 @@ function parseReplayTimestampFromFilename(fileName) {
   );
 }
 
+function parseReplayVersionFromFilename(fileName) {
+  const match = String(fileName || "").match(/\bv(\d+(?:\.\d+){2,4})\b/i);
+  return match ? match[1] : null;
+}
+
+function splitResolvedPath(filePath) {
+  const resolved = path.resolve(filePath);
+  const root = path.parse(resolved).root;
+  return {
+    root,
+    parts: resolved.slice(root.length).split(path.sep).filter(Boolean),
+  };
+}
+
+function resolveDeProfileContext(filePath) {
+  const { root, parts } = splitResolvedPath(filePath);
+  const gamesIndex = parts.findIndex(
+    (part, index) =>
+      part === "Games" &&
+      parts[index + 1] === "Age of Empires 2 DE" &&
+      parts[index + 2] &&
+      DE_SAVEGAME_DIR_NAMES.includes(parts[index + 3])
+  );
+
+  if (gamesIndex < 0) {
+    return null;
+  }
+
+  const deRoot = path.join(root, ...parts.slice(0, gamesIndex + 2));
+  const profileId = cleanString(parts[gamesIndex + 2], 80);
+  const savegameDir = path.join(root, ...parts.slice(0, gamesIndex + 4));
+  const driveIndex = parts.lastIndexOf("drive_c");
+  const driveRoot = driveIndex >= 0 ? path.join(root, ...parts.slice(0, driveIndex + 1)) : null;
+
+  return {
+    deRoot,
+    driveRoot,
+    profileId,
+    savegameDir,
+    logsDir: path.join(deRoot, "logs"),
+    telemetryDir: path.join(deRoot, "telemetry"),
+  };
+}
+
+async function readTextFileIfSmall(filePath, maxBytes = MAX_DE_LOG_BYTES) {
+  try {
+    const stats = await fs.promises.stat(filePath);
+    if (!stats.isFile() || stats.size > maxBytes) {
+      return null;
+    }
+    return await fs.promises.readFile(filePath, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+function parseAge2SessionData(raw) {
+  if (!raw) {
+    return null;
+  }
+
+  const values = {};
+  for (const line of raw.split(/\r?\n/)) {
+    const match = line.match(/^\s*([^=]+?)\s*=\s*(.*?)\s*$/);
+    if (!match) {
+      continue;
+    }
+    values[match[1].trim()] = match[2].trim();
+  }
+
+  const versionRaw = cleanString(values.Version, 120);
+  const versionMatch = versionRaw.match(/^([0-9.]+)(?:\s+#\(([^)]+)\))?/);
+  const playerSessionId = cleanString(values.PlayerSessionID, 120);
+  const config = cleanString(values.Config, 80);
+  const stream = cleanString(values.Stream, 120);
+
+  if (!versionRaw && !playerSessionId && !config && !stream) {
+    return null;
+  }
+
+  return {
+    gameVersion: versionMatch
+      ? {
+          value: versionMatch[1],
+          build: cleanString(versionMatch[2], 40) || null,
+          source: "Age2SessionData.txt",
+        }
+      : versionRaw
+        ? {
+            value: versionRaw,
+            build: null,
+            source: "Age2SessionData.txt",
+          }
+        : null,
+    playerSessionId: playerSessionId || null,
+    config: config || null,
+    stream: stream || null,
+  };
+}
+
+async function readAge2SessionData(context) {
+  if (!context?.logsDir) {
+    return null;
+  }
+
+  return parseAge2SessionData(
+    await readTextFileIfSmall(path.join(context.logsDir, "Age2SessionData.txt"), 64 * 1024)
+  );
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function parseSteamPersonaName(raw, steam64Id) {
+  if (!raw || !steam64Id) {
+    return null;
+  }
+
+  const blockMatch = raw.match(new RegExp(`"${escapeRegExp(steam64Id)}"\\s*\\{([\\s\\S]*?)\\n\\s*\\}`));
+  const block = blockMatch?.[1] || "";
+  const personaMatch = block.match(/"PersonaName"\s*"([^"]+)"/);
+  return cleanString(personaMatch?.[1], 120) || null;
+}
+
+function getSteamConfigCandidates(context) {
+  if (!context?.driveRoot) {
+    return [];
+  }
+
+  return [
+    path.join(context.driveRoot, "Program Files (x86)", "Steam", "config", "loginusers.vdf"),
+    path.join(context.driveRoot, "Program Files", "Steam", "config", "loginusers.vdf"),
+    path.join(context.driveRoot, "Steam", "config", "loginusers.vdf"),
+  ];
+}
+
+async function readLocalPlayerIdentity(context) {
+  const steam64 = /^\d{10,20}$/.test(context?.profileId || "") ? context.profileId : null;
+  if (!steam64) {
+    return null;
+  }
+
+  for (const candidate of getSteamConfigCandidates(context)) {
+    const raw = await readTextFileIfSmall(candidate, 512 * 1024);
+    const personaName = parseSteamPersonaName(raw, steam64);
+    if (personaName) {
+      return {
+        steam64,
+        persona_name: personaName,
+        source: "steam_loginusers",
+      };
+    }
+  }
+
+  return {
+    steam64,
+    source: "savegame_path",
+  };
+}
+
+function parseDeLogTimestamp(line) {
+  const match = String(line || "").match(
+    /(\d{4})\/(\d{2})\/(\d{2})\s+(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?\s+\(UTC\)/
+  );
+  if (!match) {
+    return null;
+  }
+
+  const [, year, month, day, hour, minute, second, millisecond = "0"] = match;
+  return toIso(
+    new Date(
+      Date.UTC(
+        Number(year),
+        Number(month) - 1,
+        Number(day),
+        Number(hour),
+        Number(minute),
+        Number(second),
+        Number(millisecond.padEnd(3, "0"))
+      )
+    )
+  );
+}
+
+function isWithinLobbyCandidateWindow(observedAt, startedAt, endedAt) {
+  if (!observedAt || (!startedAt && !endedAt)) {
+    return true;
+  }
+
+  const observedMs = new Date(observedAt).getTime();
+  const startMs = startedAt ? new Date(startedAt).getTime() : observedMs;
+  const endMs = endedAt ? new Date(endedAt).getTime() : startMs;
+  if ([observedMs, startMs, endMs].some((value) => Number.isNaN(value))) {
+    return true;
+  }
+
+  return observedMs >= startMs - DE_LOBBY_TIME_WINDOW_MS && observedMs <= endMs + DE_LOBBY_TIME_WINDOW_MS;
+}
+
+async function getRecentMainLogPaths(logsDir) {
+  try {
+    const entries = await fs.promises.readdir(logsDir, { withFileTypes: true });
+    const candidates = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory()) {
+        continue;
+      }
+      const mainLogPath = path.join(logsDir, entry.name, "MainLog.txt");
+      try {
+        const stats = await fs.promises.stat(mainLogPath);
+        if (stats.isFile() && stats.size <= MAX_DE_LOG_BYTES) {
+          candidates.push({
+            path: mainLogPath,
+            folder: entry.name,
+            mtimeMs: stats.mtimeMs,
+          });
+        }
+      } catch {
+        // Ignore partially written or rotated log folders.
+      }
+    }
+    return candidates.sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, 8);
+  } catch {
+    return [];
+  }
+}
+
+async function readCandidateLobbyIds(context, { startedAt, endedAt } = {}) {
+  if (!context?.logsDir) {
+    return [];
+  }
+
+  const candidates = [];
+  for (const logFile of await getRecentMainLogPaths(context.logsDir)) {
+    const raw = await readTextFileIfSmall(logFile.path, MAX_DE_LOG_BYTES);
+    if (!raw) {
+      continue;
+    }
+
+    raw.split(/\r?\n/).forEach((line, index) => {
+      const match = line.match(/SteamLobbyList::RemoveLobby:.*?\bsessionId=(\d+)/);
+      if (!match) {
+        return;
+      }
+
+      const observedAt = parseDeLogTimestamp(line);
+      if (!isWithinLobbyCandidateWindow(observedAt, startedAt, endedAt)) {
+        return;
+      }
+
+      candidates.push({
+        id: match[1],
+        source: "de_mainlog",
+        confidence: "low",
+        observed_at: observedAt,
+        source_file: path.join("logs", logFile.folder, "MainLog.txt"),
+        line: index + 1,
+      });
+    });
+  }
+
+  const seen = new Set();
+  return candidates
+    .filter((candidate) => {
+      const key = `${candidate.id}:${candidate.observed_at || ""}:${candidate.source_file}`;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => String(a.observed_at || "").localeCompare(String(b.observed_at || "")))
+    .slice(0, MAX_CANDIDATE_LOBBY_IDS);
+}
+
+function mergeDeRuntimeMetadata(metadata, runtimeMetadata) {
+  if (!runtimeMetadata) {
+    return metadata;
+  }
+
+  const next = { ...metadata };
+  const sources = [...next.metadata_sources];
+
+  if (runtimeMetadata.deRuntime) {
+    next.de_runtime = runtimeMetadata.deRuntime;
+    sources.push("de_profile_context");
+    if (runtimeMetadata.deRuntime.player_session_id) {
+      sources.push("de_session_data");
+    }
+  }
+
+  if (runtimeMetadata.gameVersion) {
+    next.game_version = runtimeMetadata.gameVersion;
+    if (runtimeMetadata.gameVersion.source === "Age2SessionData.txt") {
+      sources.push("de_session_data");
+    } else {
+      sources.push("replay_filename_version");
+    }
+  }
+
+  if (runtimeMetadata.localPlayer) {
+    next.local_player = runtimeMetadata.localPlayer;
+    sources.push(runtimeMetadata.localPlayer.source || "local_player_identity");
+  }
+
+  if (runtimeMetadata.candidateLobbyIds?.length) {
+    next.candidate_lobby_ids = runtimeMetadata.candidateLobbyIds;
+    sources.push("de_log_candidate_lobby");
+  }
+
+  next.metadata_sources = [...new Set(sources)];
+  next.trust = {
+    ...next.trust,
+    de_runtime_context: Boolean(runtimeMetadata.deRuntime),
+    local_player_identity: Boolean(runtimeMetadata.localPlayer),
+    candidate_lobby_id: false,
+    trusted_player_data: false,
+    winner: false,
+    replay_parser: false,
+    bet_arming_eligible: false,
+  };
+
+  return next;
+}
+
+async function collectDeRuntimeMetadata(filePath, metadata) {
+  const context = resolveDeProfileContext(filePath);
+  const filenameVersion = parseReplayVersionFromFilename(path.basename(filePath));
+  const sessionData = await readAge2SessionData(context);
+  const localPlayer = await readLocalPlayerIdentity(context);
+  const candidateLobbyIds = await readCandidateLobbyIds(context, {
+    startedAt: metadata.started_at,
+    endedAt: metadata.ended_at,
+  });
+
+  const deRuntime = context
+    ? {
+        profile_id: context.profileId,
+        profile_source: "savegame_path",
+        player_session_id: sessionData?.playerSessionId || null,
+        player_session_source: sessionData?.playerSessionId ? "Age2SessionData.txt" : null,
+        config: sessionData?.config || null,
+        stream: sessionData?.stream || null,
+      }
+    : null;
+
+  const gameVersion =
+    sessionData?.gameVersion ||
+    (filenameVersion
+      ? {
+          value: filenameVersion,
+          build: null,
+          source: "replay_filename",
+        }
+      : null);
+
+  if (!deRuntime && !gameVersion && !localPlayer && candidateLobbyIds.length === 0) {
+    return null;
+  }
+
+  return {
+    deRuntime,
+    gameVersion,
+    localPlayer,
+    candidateLobbyIds,
+  };
+}
+
 function getPotentialMetadataSidecarPaths(filePath) {
   const parsed = path.parse(filePath);
   return [
@@ -583,7 +955,10 @@ async function buildWatcherFinalMetadata(
     },
   };
 
-  return mergeLocalMetadataSidecar(metadata, await readWatcherMetadataSidecar(filePath));
+  const runtimeMetadata = await collectDeRuntimeMetadata(filePath, metadata);
+  const enrichedMetadata = mergeDeRuntimeMetadata(metadata, runtimeMetadata);
+
+  return mergeLocalMetadataSidecar(enrichedMetadata, await readWatcherMetadataSidecar(filePath));
 }
 
 function getStateEntry(filePath) {

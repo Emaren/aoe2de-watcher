@@ -93,6 +93,25 @@ The main window includes **Scan & Import Replays**.
 - shows found / queued / skipped / uploaded / failed counts
 - stores failed uploads so they can be retried from the same UI
 
+## Final metadata trust boundaries
+
+Final uploads include a conservative watcher metadata payload. The payload always includes file observation facts such as replay hash, filename, size, timestamps, watcher uid, and watcher session id. When the replay lives under a DE/CrossOver profile path, the watcher also tries to add DE-native runtime context:
+
+- `de_runtime.profile_id` from the `Age of Empires 2 DE/<steam-id>/savegame` path
+- `de_runtime.player_session_id`, build config, and stream from `logs/Age2SessionData.txt`
+- `game_version` from `Age2SessionData.txt`, falling back to the replay filename version
+- `local_player.steam64` and `local_player.persona_name` from Steam `loginusers.vdf`
+- `candidate_lobby_ids[]` from DE `MainLog.txt` `sessionId=` lines near the replay time
+
+These fields are display/context metadata only. The watcher does not promote candidate lobby ids into `lobby_id`, does not mix `local_player` into `players`, and does not infer opponent names, player count, civs, teams, map, rated status, or winner from local logs. `players` stays empty unless an explicit local sidecar supplies a trustworthy roster, and watcher metadata remains `bet_arming_eligible: false`.
+
+The API stores parser-blind finals as:
+
+- `watcher_final_unparsed` when only bare file-observation metadata exists
+- `watcher_final_metadata` when actual enrichment exists, such as DE runtime context, local player identity, game version, candidate lobby ids, or explicit sidecar metadata
+
+If a later parser-trusted result succeeds for the same replay hash, parser truth upgrades the same visible final row instead of creating a duplicate.
+
 ## Optional environment variables
 
 - `AOE2_API_BASE_URL` (default: `https://api-prodn.aoe2dewarwagers.com`)
