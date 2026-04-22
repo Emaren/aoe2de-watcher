@@ -11,7 +11,7 @@
     "test": "node --test watcher.test.js",
     "build": "electron-builder",
     "pack": "electron-builder --dir",
-    "dist:mac": "electron-builder --mac dmg --arm64",
+    "dist:mac": "electron-builder --mac dmg --arm64 && node scripts/fix-mac-update-yml.mjs",
     "dist:win": "electron-builder --win nsis portable --x64",
     "dist:linux": "electron-builder --linux AppImage --x64",
     "dist:manual-zip": "node scripts/build-manual-zip.mjs",
